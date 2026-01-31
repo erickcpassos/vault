@@ -4,11 +4,6 @@ use std::io::Read;
 use std::process;
 use std::io::Write;
 
-// vault list
-// vault get <name>
-// vault add <name> <username> <password>
-// vault delete <name>
-
 fn get_file_contents(file_path: &str) -> String {
     let mut file = fs::OpenOptions::new()
         .read(true)
