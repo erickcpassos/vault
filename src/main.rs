@@ -1,8 +1,8 @@
 use std::env;
 use std::fs;
 use std::io::Read;
-use std::process;
 use std::io::Write;
+use std::process;
 
 fn get_file_contents(file_path: &str) -> String {
     let mut file = fs::OpenOptions::new()
@@ -21,13 +21,44 @@ fn get_file_contents(file_path: &str) -> String {
     content
 }
 
-fn list_credentials() {
-    
+fn overwrite_file_contents(file_path: &str, content: &str) {
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .truncate(true)
+        .open(file_path)
+        .unwrap();
 
+    if let Err(e) = write!(file, "{content}") {
+        eprintln!("Couldn't write to file: {}", e);
+    }
+}
+
+fn append_to_file(file_path: &str, content: &str) {
+    let mut file = fs::OpenOptions::new()
+        .append(true)
+        .open("data.txt")
+        .unwrap();
+
+    // move this to an "append_to_file" function
+    if let Err(e) = writeln!(file, "{content}") {
+        eprintln!("Couldn't write to file: {}", e);
+    }
+}
+
+fn split_content_lines(content: &str) -> Vec<&str> {
+    // careful with \n or \r\n
+    content.split("\n").collect::<Vec<&str>>()
+}
+
+fn list_credentials() {
     let content = get_file_contents("data.txt");
 
-    // careful with \n or \r\n
-    let lines= content.split("\n").collect::<Vec<&str>>();
+    let lines = split_content_lines(content.as_str());
+
+    if lines.len() == 0 {
+        println!("No credentials found.");
+        return;
+    }
 
     println!("Saved credentials:");
     for i in lines {
@@ -38,27 +69,20 @@ fn list_credentials() {
 }
 
 fn add_credential(params: &AddParams) {
-    println!("Adding credentials");
+    let AddParams {
+        name,
+        username,
+        password,
+    } = params;
 
-    let mut file = fs::OpenOptions::new()
-        .append(true)
-        .open("data.txt")
-        .unwrap();
-
-    let AddParams {name, username, password} = params;
-
-    if let Err(e) = writeln!(file, "{name} {username} {password}") {
-        eprintln!("Couldn't write to file: {}", e);
-    }
-
+    append_to_file("data.txt", format!("{name} {username} {password}").as_str());
+    println!("Credential \"{name}\" added successfully.");
 }
 
 fn get_credential(params: &GetParams) {
-
     let content = get_file_contents("data.txt");
 
-    // careful with \n or \r\n
-    let lines= content.split("\n").collect::<Vec<&str>>(); 
+    let lines = split_content_lines(content.as_str());
 
     let mut found_credential = false;
 
@@ -68,7 +92,6 @@ fn get_credential(params: &GetParams) {
             let credential_name = data[0];
 
             if credential_name == params.0 {
-
                 let credential_username;
                 let credential_password;
 
@@ -81,12 +104,48 @@ fn get_credential(params: &GetParams) {
                 }
 
                 found_credential = true;
-                println!("Name: {}\nUsername: {}\nPassword: {}", credential_name, credential_username, credential_password);
+                println!(
+                    "Name: {}\nUsername: {}\nPassword: {}",
+                    credential_name, credential_username, credential_password
+                );
             }
         }
     }
 
-    if !found_credential { println!("No credentials found for name \"{}\".", params.0); };
+    if !found_credential {
+        println!("No credentials found for name \"{}\".", params.0);
+    };
+}
+
+fn delete_credential(params: &DeleteParams) {
+    let content = get_file_contents("data.txt");
+    let lines = split_content_lines(content.as_str());
+
+    let mut updated_file = String::new();
+    let mut found_credential = false;
+
+    for i in lines {
+        if i.len() == 0 {
+            // ignore '\n' lines
+            continue;
+        }
+
+        let data = i.split_ascii_whitespace().collect::<Vec<&str>>();
+        if data.len() < 1 || (data[0] != params.0) {
+            updated_file.push_str(i);
+            updated_file.push('\n');
+        } else {
+            found_credential = true;
+        }
+    }
+
+    overwrite_file_contents("data.txt", &updated_file);
+
+    if found_credential {
+        println!("Credential \"{}\" deleted successfully.", params.0);
+    } else {
+        println!("No credentials found for name \"{}\".", params.0);
+    }
 }
 
 fn default_action() {
@@ -94,14 +153,23 @@ fn default_action() {
 }
 
 fn run(config: &Config) {
-
     match config.params {
-        Params::List(_) => { list_credentials(); },
-        Params::Add(ref p) => { add_credential(&p); },
-        Params::Get(ref p) => { get_credential(&p); },
-        Params::Invalid(_) => { default_action(); }
+        Params::List(_) => {
+            list_credentials();
+        }
+        Params::Add(ref p) => {
+            add_credential(&p);
+        }
+        Params::Get(ref p) => {
+            get_credential(&p);
+        }
+        Params::Delete(ref p) => {
+            delete_credential(&p);
+        }
+        Params::Invalid(_) => {
+            default_action();
+        }
     }
-
 }
 
 fn main() {
@@ -110,14 +178,14 @@ fn main() {
     let config = Config::new(&args);
 
     run(&config);
-
 }
 
 enum Action {
     Get,
     Add,
     List,
-    Invalid
+    Delete,
+    Invalid,
 }
 
 struct ListParams;
@@ -125,14 +193,16 @@ struct GetParams(String);
 struct AddParams {
     name: String,
     username: String,
-    password: String
+    password: String,
 }
+struct DeleteParams(String);
 struct InvalidParams;
 
 enum Params {
     List(ListParams),
     Get(GetParams),
     Add(AddParams),
+    Delete(DeleteParams),
     Invalid(InvalidParams),
 }
 
@@ -150,7 +220,6 @@ impl Config {
     }
 
     fn get_config_enum(args: &[String]) -> Action {
-
         if args.len() <= 1 {
             return Action::Invalid;
         }
@@ -160,12 +229,12 @@ impl Config {
             "get" => Action::Get,
             "add" => Action::Add,
             "list" => Action::List,
-            _ => Action::Invalid
+            "delete" => Action::Delete,
+            _ => Action::Invalid,
         }
     }
 
     fn get_params(args: &[String]) -> Params {
-
         let action = Config::get_config_enum(args);
         let params = &args[2..];
 
@@ -173,39 +242,48 @@ impl Config {
             Action::List => Params::List(ListParams),
             Action::Get => {
                 if params.len() == 1 {
-                    Params::Get(GetParams(params[0].clone()))                    
+                    Params::Get(GetParams(params[0].clone()))
                 } else {
-                    println!("vault get requires 1 parameter, but {} parameters were used.", params.len());
+                    println!(
+                        "vault get requires 1 parameter, but {} parameters were used.",
+                        params.len()
+                    );
                     process::exit(1);
                 }
-            },
+            }
             Action::Add => {
                 if params.len() == 2 {
-                    Params::Add(
-                        AddParams {
-                            name: params[0].clone(),
-                            password: params[1].clone(),
-                            username: String::new() 
-                            // maybe make this username None
-                        }
-                    )               
+                    Params::Add(AddParams {
+                        name: params[0].clone(),
+                        password: params[1].clone(),
+                        username: String::new(), // maybe make this username None
+                    })
                 } else if params.len() == 3 {
-                    Params::Add(
-                        AddParams {
-                            name: params[0].clone(),
-                            username: params[1].clone(), 
-                            password: params[2].clone(),
-                        }
-                    )  
+                    Params::Add(AddParams {
+                        name: params[0].clone(),
+                        username: params[1].clone(),
+                        password: params[2].clone(),
+                    })
                 } else {
-                    println!("vault add requires 2 or 3 parameters, but {} parameters were used.", params.len());
+                    println!(
+                        "vault add requires 2 or 3 parameters, but {} parameters were used.",
+                        params.len()
+                    );
                     process::exit(1)
                 }
-            },
-            Action::Invalid => {
-                Params::Invalid(InvalidParams)
             }
-        } 
-
+            Action::Delete => {
+                if params.len() == 1 {
+                    Params::Delete(DeleteParams(params[0].clone()))
+                } else {
+                    println!(
+                        "vault delete requires 1 parameter, but {} parameters were used.",
+                        params.len()
+                    );
+                    process::exit(1);
+                }
+            }
+            Action::Invalid => Params::Invalid(InvalidParams),
+        }
     }
 }
